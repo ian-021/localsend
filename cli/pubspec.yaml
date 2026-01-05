@@ -11,6 +11,9 @@ dependencies:
   common:
     path: ../common
   path: 1.9.0
+  crypto: ^3.0.3          # SHA-256 hashing for code phrases
+  uuid: ^4.0.0            # Session IDs
+  http: ^1.1.0            # HTTP client for receiver
 
 dev_dependencies:
   lints: ^2.0.0
