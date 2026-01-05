@@ -8,17 +8,20 @@ import 'package:common/model/dto/info_register_dto.dart';
 import 'package:common/model/dto/prepare_upload_request_dto.dart';
 import 'package:common/model/dto/prepare_upload_response_dto.dart';
 import 'package:common/model/device.dart';
+import 'package:common/model/stored_security_context.dart';
 import 'package:uuid/uuid.dart';
 import '../transfer/file_scanner.dart';
+import '../util/security_helper.dart';
 
 const _uuid = Uuid();
 
-/// HTTP server for sender side (receives prepare-upload requests and serves files).
+/// HTTPS server for sender side (receives prepare-upload requests and serves files).
 class CliServer {
   final int port;
   final String fingerprint;
   final String alias;
   final Map<String, FileInfo> files;
+  final StoredSecurityContext securityContext;
 
   HttpServer? _server;
   String? _sessionId;
@@ -29,12 +32,18 @@ class CliServer {
     required this.fingerprint,
     required this.alias,
     required this.files,
+    required this.securityContext,
   });
 
-  /// Starts the HTTP server.
+  /// Starts the HTTPS server.
   Future<void> start() async {
-    _server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-    print('Server started on port $port');
+    final context = createSecurityContext(securityContext);
+    _server = await HttpServer.bindSecure(
+      InternetAddress.anyIPv4,
+      port,
+      context,
+    );
+    print('Secure server started on port $port');
 
     _server!.listen(_handleRequest);
   }

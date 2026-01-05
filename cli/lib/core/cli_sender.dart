@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:common/model/stored_security_context.dart';
 import 'package:uuid/uuid.dart';
 import '../core/code_phrase.dart';
 import '../discovery/cli_multicast.dart';
 import '../transfer/file_scanner.dart';
+import '../util/security_helper.dart';
 import 'cli_server.dart';
 
 const _uuid = Uuid();
@@ -17,6 +19,7 @@ class CliSender {
   String? _codePhrase;
   String? _codeHash;
   String? _sessionId;
+  StoredSecurityContext? _securityContext;
   CliMulticast? _multicast;
   CliServer? _server;
   Map<String, FileInfo>? _files;
@@ -45,23 +48,25 @@ class CliSender {
         print('  - ${file.dto.fileName} (${file.dto.size} bytes)');
       }
 
-      // 2. Generate code phrase
+      // 2. Generate code phrase and security context
       _codePhrase = await CodePhrase.generate();
       _codeHash = CodePhrase.hash(_codePhrase!);
       _sessionId = _uuid.v4();
+      _securityContext = generateSecurityContext();
 
       print('\nCode phrase: $_codePhrase');
       print('\nOn the receiving device, run:');
       print('    localsend $_codePhrase');
       print('\nWaiting for receiver...');
 
-      // 3. Start HTTP server
+      // 3. Start HTTPS server
       final serverPort = port ?? await _findAvailablePort();
       _server = CliServer(
         port: serverPort,
-        fingerprint: _generateFingerprint(),
+        fingerprint: _securityContext!.certificateHash,
         alias: 'CLI Sender',
         files: _files!,
+        securityContext: _securityContext!,
       );
       await _server!.start();
 
@@ -72,8 +77,8 @@ class CliSender {
         sessionId: _sessionId!,
         alias: 'CLI Sender',
         port: serverPort,
-        fingerprint: _server!.fingerprint,
-        useHttps: false,
+        fingerprint: _securityContext!.certificateHash,
+        useHttps: true,
       );
 
       // 5. Wait for receiver to connect (with timeout)
@@ -116,10 +121,6 @@ class CliSender {
     throw Exception('No available ports found in range 53317-53417');
   }
 
-  /// Generates a simple fingerprint for this session.
-  String _generateFingerprint() {
-    return _sessionId ?? _uuid.v4();
-  }
 
   /// Cleans up resources.
   Future<void> cleanup() async {

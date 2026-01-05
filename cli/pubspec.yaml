@@ -14,6 +14,8 @@ dependencies:
   crypto: ^3.0.3          # SHA-256 hashing for code phrases
   uuid: ^4.0.0            # Session IDs
   http: ^1.1.0            # HTTP client for receiver
+  basic_utils: ^5.7.0     # Certificate generation
+  convert: ^3.1.1         # Hex encoding
 
 dev_dependencies:
   lints: ^2.0.0

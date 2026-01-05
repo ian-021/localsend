@@ -20,6 +20,11 @@ class MulticastDto with MulticastDtoMappable {
   final bool? announcement; // v1
   final bool? announce; // v2
 
+  // CLI-specific fields
+  final String? codeHash; // SHA-256 hash of code phrase (CLI mode)
+  final String? cliSessionId; // Unique session ID for CLI transfers
+  final bool? cliMode; // Flag to indicate CLI transfer mode
+
   const MulticastDto({
     required this.alias,
     required this.version,
@@ -31,6 +36,9 @@ class MulticastDto with MulticastDtoMappable {
     required this.download,
     required this.announcement,
     required this.announce,
+    this.codeHash,
+    this.cliSessionId,
+    this.cliMode,
   });
 
   static const fromJson = MulticastDtoMapper.fromJson;

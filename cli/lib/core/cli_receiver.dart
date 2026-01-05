@@ -6,13 +6,16 @@ import 'package:common/model/dto/file_dto.dart';
 import 'package:common/model/dto/info_register_dto.dart';
 import 'package:common/model/dto/prepare_upload_request_dto.dart';
 import 'package:common/model/dto/prepare_upload_response_dto.dart';
+import 'package:common/model/stored_security_context.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:path/path.dart' as path;
 import 'package:uuid/uuid.dart';
 import '../core/code_phrase.dart';
 import '../discovery/cli_multicast.dart';
 import '../ui/formatter.dart';
 import '../ui/progress_bar.dart';
+import '../util/security_helper.dart';
 
 const _uuid = Uuid();
 
@@ -26,6 +29,8 @@ class CliReceiver {
   String? _codeHash;
   CliMulticast? _multicast;
   Device? _sender;
+  StoredSecurityContext? _securityContext;
+  http.Client? _httpClient;
 
   CliReceiver({
     required this.codePhrase,
@@ -47,6 +52,9 @@ class CliReceiver {
       }
 
       _codeHash = CodePhrase.hash(codePhrase);
+
+      // Generate our own security context
+      _securityContext = generateSecurityContext();
 
       print('Searching for sender with code: $codePhrase');
 
@@ -97,9 +105,32 @@ class CliReceiver {
   /// Initiates the file transfer with the sender.
   Future<void> _initiateTransfer() async {
     try {
+      // Create HTTP client with certificate validation
+      final httpClient = HttpClient();
+
+      // Accept self-signed certificates but validate fingerprint
+      httpClient.badCertificateCallback = (cert, host, port) {
+        // Extract certificate fingerprint and validate
+        final certPem = cert.pem;
+        final isValid = validateCertificateFingerprint(
+          certPem,
+          _sender!.fingerprint,
+        );
+
+        if (!isValid) {
+          print('Warning: Certificate fingerprint mismatch!');
+          print('Expected: ${_sender!.fingerprint}');
+          print('Got: ${calculateHashOfCertificate(certPem)}');
+        }
+
+        return isValid;
+      };
+
+      _httpClient = IOClient(httpClient);
+
       // 1. Send prepare-upload request to announce ourselves
       final prepareUrl = Uri.parse(
-        'http://${_sender!.ip}:${_sender!.port}/api/localsend/v2/prepare-upload',
+        'https://${_sender!.ip}:${_sender!.port}/api/localsend/v2/prepare-upload',
       );
 
       final prepareRequest = PrepareUploadRequestDto(
@@ -108,7 +139,7 @@ class CliReceiver {
           version: '2.1',
           deviceModel: 'CLI',
           deviceType: DeviceType.headless,
-          fingerprint: _uuid.v4(),
+          fingerprint: _securityContext!.certificateHash,
           port: null,
           protocol: null,
           download: null,
@@ -116,7 +147,7 @@ class CliReceiver {
         files: {}, // Receiver doesn't know files yet
       );
 
-      final response = await http.post(
+      final response = await _httpClient!.post(
         prepareUrl,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(prepareRequest.toJson()),
@@ -198,7 +229,7 @@ class CliReceiver {
     String destDir,
   ) async {
     final downloadUrl = Uri.parse(
-      'http://${_sender!.ip}:${_sender!.port}/api/localsend/v2/download?sessionId=$sessionId&fileId=$fileId',
+      'https://${_sender!.ip}:${_sender!.port}/api/localsend/v2/download?sessionId=$sessionId&fileId=$fileId',
     );
 
     // Ensure destination directory exists
@@ -207,8 +238,25 @@ class CliReceiver {
       await destDirectory.create(recursive: true);
     }
 
+    // SECURITY: Sanitize filename to prevent path traversal
+    final sanitizedFileName = _sanitizeFileName(fileDto.fileName);
+    if (sanitizedFileName.isEmpty) {
+      throw Exception('SECURITY: Invalid file name: ${fileDto.fileName}');
+    }
+
     // Handle nested paths
-    final filePath = path.join(destDir, fileDto.fileName);
+    final filePath = path.join(destDir, sanitizedFileName);
+
+    // SECURITY: Validate path is within destination directory
+    final canonicalDest = await destDirectory.resolveSymbolicLinks();
+    final canonicalFile = File(filePath).absolute.path;
+
+    if (!canonicalFile.startsWith(canonicalDest)) {
+      throw Exception(
+        'SECURITY: Path traversal detected: ${fileDto.fileName} -> $canonicalFile',
+      );
+    }
+
     final fileDirectory = Directory(path.dirname(filePath));
     if (!await fileDirectory.exists()) {
       await fileDirectory.create(recursive: true);
@@ -216,13 +264,21 @@ class CliReceiver {
 
     final file = File(filePath);
 
+    // SECURITY: Check file size limit (10 GB max)
+    const maxFileSize = 10 * 1024 * 1024 * 1024;
+    if (fileDto.size > maxFileSize) {
+      throw Exception(
+        'File too large: ${fileDto.fileName} (${fileDto.size} bytes, max: $maxFileSize bytes)',
+      );
+    }
+
     // Download with progress bar
     final progressBar = ProgressBar(
-      label: fileDto.fileName,
+      label: sanitizedFileName,
       total: fileDto.size,
     );
 
-    final request = await http.Client().send(http.Request('GET', downloadUrl));
+    final request = await _httpClient!.send(http.Request('GET', downloadUrl));
 
     if (request.statusCode != 200) {
       throw Exception('Failed to download ${fileDto.fileName}: ${request.statusCode}');
@@ -232,8 +288,18 @@ class CliReceiver {
     int received = 0;
 
     await for (final chunk in request.stream) {
-      sink.add(chunk);
       received += chunk.length;
+
+      // SECURITY: Validate size while downloading (in case sender lies)
+      if (received > maxFileSize) {
+        await sink.close();
+        await file.delete();
+        throw Exception(
+          'File exceeded size limit during transfer: ${fileDto.fileName}',
+        );
+      }
+
+      sink.add(chunk);
       progressBar.update(received);
     }
 
@@ -241,9 +307,34 @@ class CliReceiver {
     progressBar.complete();
   }
 
+  /// Sanitizes a file name to prevent path traversal attacks.
+  String _sanitizeFileName(String fileName) {
+    // Split path into components
+    final parts = path.split(fileName);
+
+    // Filter out dangerous components
+    final safeParts = parts.where((p) {
+      // Remove parent directory references
+      if (p == '..' || p == '.') return false;
+
+      // Remove absolute path indicators
+      if (path.isAbsolute(p)) return false;
+
+      // Remove path separators within component
+      if (p.contains('/') || p.contains('\\')) return false;
+
+      // Keep valid components
+      return p.isNotEmpty;
+    }).toList();
+
+    // Reconstruct safe path (preserves directory structure for nested files)
+    return safeParts.isEmpty ? '' : path.joinAll(safeParts);
+  }
+
   /// Cleans up resources.
   Future<void> cleanup() async {
     _multicast?.stop();
     _multicast?.dispose();
+    _httpClient?.close();
   }
 }
