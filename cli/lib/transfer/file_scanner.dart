@@ -60,12 +60,15 @@ class FileScanner {
   /// Scans a directory recursively and returns all files.
   static Future<Map<String, FileInfo>> _scanDirectory(Directory dir) async {
     final result = <String, FileInfo>{};
+    final dirName = path.basename(dir.path);
     final basePath = dir.path;
 
     await for (final entity in dir.list(recursive: true, followLinks: false)) {
       if (entity is File) {
         // Calculate relative path from base directory
-        final relativePath = path.relative(entity.path, from: basePath);
+        final relativeFromDir = path.relative(entity.path, from: basePath);
+        // Prepend directory name to preserve folder structure
+        final relativePath = path.join(dirName, relativeFromDir);
         final info = await _scanFile(entity, relativePath);
         result[info.dto.id] = info;
       }

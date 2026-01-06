@@ -1,5 +1,8 @@
 import 'dart:io';
 import 'package:args/args.dart';
+import 'package:common/model/dto/file_dto.dart';
+import 'package:common/model/dto/prepare_upload_request_dto.dart';
+import 'package:dart_mappable/dart_mappable.dart';
 import 'commands/send_command.dart';
 import 'commands/receive_command.dart';
 import 'core/code_phrase.dart';
@@ -7,6 +10,9 @@ import 'core/code_phrase.dart';
 const version = '1.0.0';
 
 Future<void> main(List<String> arguments) async {
+  // Initialize mappers
+  MapperContainer.globals.use(const FileDtoMapper());
+  PrepareUploadRequestDtoMapper.ensureInitialized();
   // Handle no arguments
   if (arguments.isEmpty) {
     _printUsage();
@@ -56,8 +62,8 @@ Future<void> main(List<String> arguments) async {
     // Validate code phrase format
     if (!CodePhrase.validate(codePhrase)) {
       print('Error: Invalid code phrase format');
-      print('Expected format: adjective-noun-animal-number');
-      print('Example: swift-ocean-tiger-7342');
+      print('Expected format: adjective-noun');
+      print('Example: swift-ocean or clear-beach');
       print('');
       print('Or use: localsend send <files> to send files');
       exit(1);
@@ -91,8 +97,8 @@ void _printUsage() {
   print('  localsend send document.pdf               # Send a file');
   print('  localsend send *.jpg report.pdf           # Send multiple files');
   print('  localsend send ./my-folder                # Send a directory');
-  print('  localsend swift-ocean-tiger-7342          # Receive with code');
-  print('  localsend swift-ocean-tiger-7342 -o ~/Downloads  # Receive to directory');
+  print('  localsend swift-ocean                     # Receive with code');
+  print('  localsend swift-ocean -o ~/Downloads      # Receive to directory');
   print('');
   print('Send Options:');
   print('  -p, --port <PORT>        Port to use (default: auto)');

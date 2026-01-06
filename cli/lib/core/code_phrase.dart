@@ -49,35 +49,33 @@ class CodePhrase {
         .toList();
   }
 
-  /// Generates a random code phrase in format: adjective-noun-animal-number
-  /// Example: swift-ocean-tiger-7342
+  /// Generates a random code phrase in format: adjective-noun-animal
+  /// Example: swift-ocean-dolphin or clear-beach-eagle
+  /// SECURITY: Increased from 2 words to 3 for better entropy (~32k combinations)
   static Future<String> generate() async {
     await _loadWordLists();
 
     final adjective = _adjectives![_random.nextInt(_adjectives!.length)];
     final noun = _nouns![_random.nextInt(_nouns!.length)];
     final animal = _animals![_random.nextInt(_animals!.length)];
-    final number = _random.nextInt(10000).toString().padLeft(4, '0');
 
-    return '$adjective-$noun-$animal-$number';
+    return '$adjective-$noun-$animal';
   }
 
   /// Validates the format of a code phrase.
   /// Returns true if the phrase matches the expected format.
+  /// SECURITY: Now expects 3 words (adjective-noun-animal) for better entropy
   static bool validate(String phrase) {
     if (phrase.isEmpty) return false;
 
     final parts = phrase.split('-');
-    if (parts.length != 4) return false;
+    // Support both old format (2 words) and new format (3 words) for backwards compatibility
+    if (parts.length != 2 && parts.length != 3) return false;
 
-    // Check that first three parts are non-empty strings
-    if (parts[0].isEmpty || parts[1].isEmpty || parts[2].isEmpty) {
-      return false;
+    // Check that all parts are non-empty strings
+    for (final part in parts) {
+      if (part.isEmpty) return false;
     }
-
-    // Check that last part is a 4-digit number
-    if (parts[3].length != 4) return false;
-    if (int.tryParse(parts[3]) == null) return false;
 
     return true;
   }

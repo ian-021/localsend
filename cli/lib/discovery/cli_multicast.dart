@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:common/constants.dart';
 import 'package:common/model/dto/multicast_dto.dart';
 import 'package:common/model/device.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:typed_data';
 
 /// Handles multicast broadcasting and listening for CLI mode.
 class CliMulticast {
@@ -17,9 +19,21 @@ class CliMulticast {
   /// Stream of discovered devices.
   Stream<Device> get devices => _deviceController.stream;
 
+  /// Computes HMAC-SHA256 of the message using the code phrase as the key.
+  /// This prevents multicast spoofing attacks.
+  static String _computeHmac(String message, String codePhrase) {
+    final key = utf8.encode(codePhrase.toLowerCase());
+    final bytes = utf8.encode(message);
+    final hmac = Hmac(sha256, key);
+    final digest = hmac.convert(bytes);
+    return digest.toString();
+  }
+
   /// Starts broadcasting the sender's information with code phrase hash.
+  /// Now includes HMAC authentication to prevent spoofing.
   Future<void> startBroadcasting({
     required String codeHash,
+    required String codePhrase,
     required String sessionId,
     required String alias,
     required int port,
@@ -46,8 +60,17 @@ class CliMulticast {
       cliMode: true,
     );
 
-    final message = jsonEncode(dto.toJson());
-    final bytes = utf8.encode(message);
+    final dtoJson = jsonEncode(dto.toJson());
+
+    // Compute HMAC for authentication (prevents spoofing)
+    final hmac = _computeHmac(dtoJson, codePhrase);
+
+    // Wrap the DTO with HMAC
+    final authenticatedMessage = jsonEncode({
+      'data': dtoJson,
+      'hmac': hmac,
+    });
+    final bytes = utf8.encode(authenticatedMessage);
 
     // Broadcast every 500ms
     _broadcastTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
@@ -66,8 +89,10 @@ class CliMulticast {
   }
 
   /// Starts listening for multicast announcements with matching code phrase hash.
+  /// Now verifies HMAC to prevent spoofing attacks.
   Future<void> startListening({
     required String codeHash,
+    required String codePhrase,
     required Function(Device) onDeviceFound,
   }) async {
     _socket = await RawDatagramSocket.bind(
@@ -90,20 +115,38 @@ class CliMulticast {
         try {
           final message = utf8.decode(datagram.data);
           final json = jsonDecode(message) as Map<String, dynamic>;
-          final dto = MulticastDto.fromJson(json);
 
-          // Check if this is a CLI mode announcement with matching code hash
-          if (dto.cliMode == true && dto.codeHash == codeHash) {
-            print('Found matching sender!');
+          // New format: verify HMAC first
+          if (json.containsKey('data') && json.containsKey('hmac')) {
+            final dtoJson = json['data'] as String;
+            final receivedHmac = json['hmac'] as String;
 
-            final device = dto.toDevice(
-              datagram.address.address,
-              dto.port ?? defaultPort,
-              dto.protocol == ProtocolType.https,
-            );
+            // Verify HMAC to prevent spoofing attacks
+            final expectedHmac = _computeHmac(dtoJson, codePhrase);
+            if (receivedHmac != expectedHmac) {
+              // SECURITY: Reject messages with invalid HMAC
+              print('Warning: Rejected multicast message with invalid HMAC (possible spoofing attempt)');
+              return;
+            }
 
-            onDeviceFound(device);
-            _deviceController.add(device);
+            // HMAC valid - parse the DTO
+            final dtoMap = jsonDecode(dtoJson) as Map<String, dynamic>;
+            final dto = MulticastDto.fromJson(dtoMap);
+
+            // Check if this is a CLI mode announcement with matching code hash
+            if (dto.cliMode == true && dto.codeHash == codeHash) {
+              final device = dto.toDevice(
+                datagram.address.address,
+                dto.port ?? defaultPort,
+                dto.protocol == ProtocolType.https,
+              );
+
+              onDeviceFound(device);
+              _deviceController.add(device);
+            }
+          } else {
+            // Old format without HMAC - reject for security
+            print('Warning: Rejected multicast message without HMAC authentication');
           }
         } catch (e) {
           // Ignore malformed messages

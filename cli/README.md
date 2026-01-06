@@ -4,7 +4,7 @@ A command-line interface for LocalSend with croc-like code phrase pairing. Send 
 
 ## Features
 
-- **Simple Code Phrases**: Use memorable codes like `swift-ocean-tiger-7342` for pairing
+- **Simple Code Phrases**: Use memorable codes like `swift-ocean` for pairing
 - **Local Network Only**: Direct peer-to-peer transfers without internet or relay servers
 - **Secure**: HTTPS encryption for all transfers
 - **Fast**: Direct connections for maximum speed
@@ -72,10 +72,10 @@ Scanning files...
 Found 1 file(s) to send
   - document.pdf (2485760 bytes)
 
-Code phrase: swift-ocean-tiger-7342
+Code phrase: swift-ocean
 
 On the receiving device, run:
-    localsend swift-ocean-tiger-7342
+    localsend swift-ocean
 
 Waiting for receiver...
 ```
@@ -86,22 +86,22 @@ On the receiving device, use the code phrase from the sender:
 
 ```bash
 # Receive files to current directory
-localsend swift-ocean-tiger-7342
+localsend swift-ocean
 
 # Receive to specific directory
-localsend swift-ocean-tiger-7342 --output ~/Downloads
+localsend swift-ocean --output ~/Downloads
 
 # Auto-accept without confirmation
-localsend swift-ocean-tiger-7342 --yes
+localsend swift-ocean --yes
 
 # Custom timeout
-localsend swift-ocean-tiger-7342 --timeout 600
+localsend swift-ocean --timeout 600
 ```
 
 When you run the receive command:
 
 ```
-Searching for sender with code: swift-ocean-tiger-7342
+Searching for sender with code: swift-ocean
 Found sender at 192.168.1.42:53318
 
 Files to receive:
@@ -168,30 +168,28 @@ localsend <code-phrase> [options]
 
 ```bash
 # Receive to current directory
-localsend swift-ocean-tiger-7342
+localsend swift-ocean
 
 # Receive to Downloads
-localsend swift-ocean-tiger-7342 -o ~/Downloads
+localsend swift-ocean -o ~/Downloads
 
 # Auto-accept
-localsend swift-ocean-tiger-7342 -y
+localsend swift-ocean -y
 
 # Custom timeout
-localsend swift-ocean-tiger-7342 -t 600
+localsend swift-ocean -t 600
 ```
 
 ## How It Works
 
 ### Code Phrase Generation
 
-Code phrases are generated in the format: `<adjective>-<noun>-<animal>-<4-digit-number>`
+Code phrases are generated in the format: `<adjective>-<noun>`
 
 - **Adjectives**: 100+ words (e.g., swift, bright, calm)
 - **Nouns**: 100+ words (e.g., ocean, river, mountain)
-- **Animals**: 100+ words (e.g., tiger, eagle, dolphin)
-- **Number**: Random 4-digit number (0000-9999)
 
-This provides ~29 bits of entropy, sufficient for local network pairing with short time windows.
+This provides sufficient entropy for local network pairing with short time windows.
 
 ### Discovery Process
 

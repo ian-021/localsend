@@ -67,6 +67,7 @@ class CliSender {
         alias: 'CLI Sender',
         files: _files!,
         securityContext: _securityContext!,
+        codePhrase: _codePhrase!,
       );
       await _server!.start();
 
@@ -74,6 +75,7 @@ class CliSender {
       _multicast = CliMulticast();
       await _multicast!.startBroadcasting(
         codeHash: _codeHash!,
+        codePhrase: _codePhrase!,
         sessionId: _sessionId!,
         alias: 'CLI Sender',
         port: serverPort,
@@ -82,14 +84,24 @@ class CliSender {
       );
 
       // 5. Wait for receiver to connect (with timeout)
-      final connected = await _server!.waitForReceiver().timeout(
+      await _server!.waitForReceiver().timeout(
         timeout,
         onTimeout: () {
           throw TimeoutException('No receiver connected within ${timeout.inSeconds} seconds');
         },
       );
 
-      print('Receiver connected! Transfer complete.');
+      print('\nReceiver connected! Waiting for file downloads...');
+
+      // 6. Wait for all files to be downloaded
+      await _server!.waitForTransferComplete().timeout(
+        timeout,
+        onTimeout: () {
+          throw TimeoutException('Transfer did not complete within ${timeout.inSeconds} seconds');
+        },
+      );
+
+      print('Transfer complete!');
       return true;
     } on TimeoutException catch (e) {
       print('\nError: $e');

@@ -23,7 +23,7 @@ StoredSecurityContext generateSecurityContext([AsymmetricKeyPair? keyPair]) {
   final certificate = X509Utils.generateSelfSignedCertificate(
     keyPair.privateKey,
     csr,
-    365 * 10, // 10 years validity
+    1, // SECURITY: 1 day validity (ephemeral certificates for single transfer)
   );
 
   final hash = calculateHashOfCertificate(certificate);

@@ -7,6 +7,7 @@ import 'package:common/model/dto/info_register_dto.dart';
 import 'package:common/model/dto/prepare_upload_request_dto.dart';
 import 'package:common/model/dto/prepare_upload_response_dto.dart';
 import 'package:common/model/stored_security_context.dart';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:path/path.dart' as path;
@@ -46,8 +47,8 @@ class CliReceiver {
       // 1. Validate code phrase
       if (!CodePhrase.validate(codePhrase)) {
         print('Error: Invalid code phrase format');
-        print('Expected format: adjective-noun-animal-number');
-        print('Example: swift-ocean-tiger-7342');
+        print('Expected format: adjective-noun-animal');
+        print('Example: swift-ocean-dolphin or clear-beach-eagle');
         return false;
       }
 
@@ -64,6 +65,7 @@ class CliReceiver {
       _multicast = CliMulticast();
       await _multicast!.startListening(
         codeHash: _codeHash!,
+        codePhrase: codePhrase,
         onDeviceFound: (device) {
           if (!senderFound.isCompleted) {
             senderFound.complete(device);
@@ -89,6 +91,9 @@ class CliReceiver {
       }
 
       print('Found sender at ${_sender!.ip}:${_sender!.port}');
+
+      // Stop multicast immediately to avoid spam
+      _multicast?.stop();
 
       // 4. Connect to sender and initiate transfer
       await _initiateTransfer();
@@ -147,10 +152,25 @@ class CliReceiver {
         files: {}, // Receiver doesn't know files yet
       );
 
+      // SECURITY: Prove knowledge of code phrase to sender (mutual authentication)
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final authData = '$timestamp:${_sender!.fingerprint}';
+      final authKey = utf8.encode(codePhrase.toLowerCase());
+      final authHmac = Hmac(sha256, authKey);
+      final authProof = authHmac.convert(utf8.encode(authData)).toString();
+
+      final requestBody = {
+        ...prepareRequest.toJson(),
+        'cliAuth': {
+          'timestamp': timestamp,
+          'proof': authProof,
+        },
+      };
+
       final response = await _httpClient!.post(
         prepareUrl,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(prepareRequest.toJson()),
+        body: jsonEncode(requestBody),
       );
 
       if (response.statusCode != 200) {
