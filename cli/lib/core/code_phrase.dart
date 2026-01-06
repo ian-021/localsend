@@ -49,32 +49,28 @@ class CodePhrase {
         .toList();
   }
 
-  /// Generates a random code phrase in format: adjective-noun-animal
-  /// Example: swift-ocean-dolphin or clear-beach-eagle
-  /// SECURITY: Increased from 2 words to 3 for better entropy (~32k combinations)
+  /// Generates a random code phrase in format: adjective-noun
+  /// Example: swift-ocean or clear-beach
   static Future<String> generate() async {
     await _loadWordLists();
 
     final adjective = _adjectives![_random.nextInt(_adjectives!.length)];
     final noun = _nouns![_random.nextInt(_nouns!.length)];
-    final animal = _animals![_random.nextInt(_animals!.length)];
 
-    return '$adjective-$noun-$animal';
+    return '$adjective-$noun';
   }
 
   /// Validates the format of a code phrase.
   /// Returns true if the phrase matches the expected format.
-  /// SECURITY: Now expects 3 words (adjective-noun-animal) for better entropy
   static bool validate(String phrase) {
     if (phrase.isEmpty) return false;
 
     final parts = phrase.split('-');
-    // Support both old format (2 words) and new format (3 words) for backwards compatibility
-    if (parts.length != 2 && parts.length != 3) return false;
+    if (parts.length != 2) return false;
 
-    // Check that all parts are non-empty strings
-    for (final part in parts) {
-      if (part.isEmpty) return false;
+    // Check that both parts are non-empty strings
+    if (parts[0].isEmpty || parts[1].isEmpty) {
+      return false;
     }
 
     return true;

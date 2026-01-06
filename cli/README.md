@@ -109,7 +109,7 @@ Files to receive:
 
 Total size: 2.4 MB
 
-Accept? [Y/n]: y
+Accept? [y/n]: y
 Receiving: document.pdf [====================] 100% (2.4 MB/2.4 MB) 15.2 MB/s
 
 Transfer complete!

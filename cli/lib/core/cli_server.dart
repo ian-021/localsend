@@ -9,7 +9,6 @@ import 'package:common/model/dto/prepare_upload_request_dto.dart';
 import 'package:common/model/dto/prepare_upload_response_dto.dart';
 import 'package:common/model/device.dart';
 import 'package:common/model/stored_security_context.dart';
-import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 import '../transfer/file_scanner.dart';
 import '../util/security_helper.dart';
@@ -23,7 +22,6 @@ class CliServer {
   final String alias;
   final Map<String, FileInfo> files;
   final StoredSecurityContext securityContext;
-  final String codePhrase;
 
   HttpServer? _server;
   String? _sessionId;
@@ -31,18 +29,12 @@ class CliServer {
   final Completer<void> _transferComplete = Completer<void>();
   int _downloadedFiles = 0;
 
-  // SECURITY: Rate limiting to prevent DoS attacks
-  final Map<String, List<int>> _requestTimestamps = {};
-  static const int _maxRequestsPerMinute = 60;
-  static const int _rateLimitWindowMs = 60 * 1000;
-
   CliServer({
     required this.port,
     required this.fingerprint,
     required this.alias,
     required this.files,
     required this.securityContext,
-    required this.codePhrase,
   });
 
   /// Starts the HTTPS server.
@@ -68,41 +60,9 @@ class CliServer {
     return _transferComplete.future;
   }
 
-  /// SECURITY: Checks if the request should be rate limited.
-  /// Returns true if the request should be blocked.
-  bool _shouldRateLimit(String ipAddress) {
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    // Get or create timestamp list for this IP
-    _requestTimestamps.putIfAbsent(ipAddress, () => []);
-    final timestamps = _requestTimestamps[ipAddress]!;
-
-    // Remove old timestamps outside the window
-    timestamps.removeWhere((ts) => now - ts > _rateLimitWindowMs);
-
-    // Check if limit exceeded
-    if (timestamps.length >= _maxRequestsPerMinute) {
-      return true; // Rate limit exceeded
-    }
-
-    // Add current timestamp
-    timestamps.add(now);
-    return false;
-  }
-
   /// Handles incoming HTTP requests.
   Future<void> _handleRequest(HttpRequest request) async {
     try {
-      // SECURITY: Rate limiting check
-      final clientIp = request.connectionInfo?.remoteAddress.address ?? 'unknown';
-      if (_shouldRateLimit(clientIp)) {
-        print('Warning: Rate limit exceeded for $clientIp');
-        request.response.statusCode = 429; // Too Many Requests
-        request.response.write('Rate limit exceeded');
-        await request.response.close();
-        return;
-      }
-
       final uri = request.uri;
 
       // Handle /api/localsend/v2/info
@@ -167,45 +127,6 @@ class CliServer {
   Future<void> _handlePrepareUpload(HttpRequest request) async {
     final body = await utf8.decodeStream(request);
     final json = jsonDecode(body) as Map<String, dynamic>;
-
-    // SECURITY: Verify receiver knows the code phrase (mutual authentication)
-    if (!json.containsKey('cliAuth')) {
-      print('Warning: Rejected connection without authentication');
-      request.response.statusCode = 401;
-      request.response.write('Authentication required');
-      await request.response.close();
-      return;
-    }
-
-    final cliAuth = json['cliAuth'] as Map<String, dynamic>;
-    final timestamp = cliAuth['timestamp'] as String;
-    final receivedProof = cliAuth['proof'] as String;
-
-    // Verify timestamp is recent (within 5 minutes to prevent replay attacks)
-    final requestTime = int.parse(timestamp);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if ((now - requestTime).abs() > 5 * 60 * 1000) {
-      print('Warning: Rejected connection with expired timestamp');
-      request.response.statusCode = 401;
-      request.response.write('Authentication expired');
-      await request.response.close();
-      return;
-    }
-
-    // Verify HMAC proof
-    final authData = '$timestamp:$fingerprint';
-    final authKey = utf8.encode(codePhrase.toLowerCase());
-    final authHmac = Hmac(sha256, authKey);
-    final expectedProof = authHmac.convert(utf8.encode(authData)).toString();
-
-    if (receivedProof != expectedProof) {
-      print('Warning: Rejected connection with invalid authentication (wrong code phrase?)');
-      request.response.statusCode = 403;
-      request.response.write('Invalid authentication');
-      await request.response.close();
-      return;
-    }
-
     final prepareRequest = PrepareUploadRequestDto.fromJson(json);
 
     print('\nReceiver connected: ${prepareRequest.info.alias}');

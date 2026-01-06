@@ -67,7 +67,6 @@ class CliSender {
         alias: 'CLI Sender',
         files: _files!,
         securityContext: _securityContext!,
-        codePhrase: _codePhrase!,
       );
       await _server!.start();
 
@@ -75,7 +74,6 @@ class CliSender {
       _multicast = CliMulticast();
       await _multicast!.startBroadcasting(
         codeHash: _codeHash!,
-        codePhrase: _codePhrase!,
         sessionId: _sessionId!,
         alias: 'CLI Sender',
         port: serverPort,

@@ -7,7 +7,6 @@ import 'package:common/model/dto/info_register_dto.dart';
 import 'package:common/model/dto/prepare_upload_request_dto.dart';
 import 'package:common/model/dto/prepare_upload_response_dto.dart';
 import 'package:common/model/stored_security_context.dart';
-import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 import 'package:path/path.dart' as path;
@@ -47,8 +46,8 @@ class CliReceiver {
       // 1. Validate code phrase
       if (!CodePhrase.validate(codePhrase)) {
         print('Error: Invalid code phrase format');
-        print('Expected format: adjective-noun-animal');
-        print('Example: swift-ocean-dolphin or clear-beach-eagle');
+        print('Expected format: adjective-noun');
+        print('Example: swift-ocean or clear-beach');
         return false;
       }
 
@@ -65,7 +64,6 @@ class CliReceiver {
       _multicast = CliMulticast();
       await _multicast!.startListening(
         codeHash: _codeHash!,
-        codePhrase: codePhrase,
         onDeviceFound: (device) {
           if (!senderFound.isCompleted) {
             senderFound.complete(device);
@@ -152,25 +150,10 @@ class CliReceiver {
         files: {}, // Receiver doesn't know files yet
       );
 
-      // SECURITY: Prove knowledge of code phrase to sender (mutual authentication)
-      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-      final authData = '$timestamp:${_sender!.fingerprint}';
-      final authKey = utf8.encode(codePhrase.toLowerCase());
-      final authHmac = Hmac(sha256, authKey);
-      final authProof = authHmac.convert(utf8.encode(authData)).toString();
-
-      final requestBody = {
-        ...prepareRequest.toJson(),
-        'cliAuth': {
-          'timestamp': timestamp,
-          'proof': authProof,
-        },
-      };
-
       final response = await _httpClient!.post(
         prepareUrl,
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(requestBody),
+        body: jsonEncode(prepareRequest.toJson()),
       );
 
       if (response.statusCode != 200) {
@@ -207,7 +190,7 @@ class CliReceiver {
 
       // 4. Confirm (if not auto-accept)
       if (!autoAccept) {
-        stdout.write('\nAccept? [Y/n]: ');
+        stdout.write('\nAccept? [y/n]: ');
         final input = stdin.readLineSync()?.toLowerCase() ?? 'y';
         if (input != 'y' && input != 'yes' && input != '') {
           print('Transfer cancelled');
@@ -282,7 +265,25 @@ class CliReceiver {
       await fileDirectory.create(recursive: true);
     }
 
-    final file = File(filePath);
+    // Check for file conflicts and handle renaming
+    var finalFilePath = filePath;
+    var finalFileName = sanitizedFileName;
+
+    if (File(filePath).existsSync()) {
+      print('\n⚠️  Warning: File "${path.basename(filePath)}" already exists in $destDir');
+      finalFileName = await _promptForNewFileName(sanitizedFileName, destDir);
+      finalFilePath = path.join(destDir, finalFileName);
+
+      // Re-validate the new path for security
+      final newCanonicalFile = File(finalFilePath).absolute.path;
+      if (!newCanonicalFile.startsWith(canonicalDest)) {
+        throw Exception(
+          'SECURITY: Path traversal detected in new filename: $finalFileName',
+        );
+      }
+    }
+
+    final file = File(finalFilePath);
 
     // SECURITY: Check file size limit (10 GB max)
     const maxFileSize = 10 * 1024 * 1024 * 1024;
@@ -294,7 +295,7 @@ class CliReceiver {
 
     // Download with progress bar
     final progressBar = ProgressBar(
-      label: sanitizedFileName,
+      label: finalFileName,
       total: fileDto.size,
     );
 
@@ -349,6 +350,35 @@ class CliReceiver {
 
     // Reconstruct safe path (preserves directory structure for nested files)
     return safeParts.isEmpty ? '' : path.joinAll(safeParts);
+  }
+
+  /// Prompts the user for a new filename when a conflict is detected.
+  Future<String> _promptForNewFileName(String originalName, String destDir) async {
+    while (true) {
+      stdout.write('Enter a new name for the file (or press Enter to skip): ');
+      final input = stdin.readLineSync()?.trim() ?? '';
+
+      if (input.isEmpty) {
+        throw Exception('File transfer cancelled: File already exists and no new name provided');
+      }
+
+      // Sanitize the new filename
+      final sanitized = _sanitizeFileName(input);
+      if (sanitized.isEmpty) {
+        print('❌ Invalid filename. Please try again.');
+        continue;
+      }
+
+      // Check if the new name also conflicts
+      final newPath = path.join(destDir, sanitized);
+      if (File(newPath).existsSync()) {
+        print('❌ File "$sanitized" also already exists. Please choose a different name.');
+        continue;
+      }
+
+      print('✓ Using new filename: $sanitized');
+      return sanitized;
+    }
   }
 
   /// Cleans up resources.
