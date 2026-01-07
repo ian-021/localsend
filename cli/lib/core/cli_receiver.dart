@@ -32,6 +32,9 @@ class CliReceiver {
   StoredSecurityContext? _securityContext;
   http.Client? _httpClient;
 
+  // Track directory renames to avoid asking multiple times for files in same directory
+  final Map<String, String> _directoryRenames = {};
+
   CliReceiver({
     required this.codePhrase,
     this.outputDirectory,
@@ -260,30 +263,61 @@ class CliReceiver {
       );
     }
 
-    final fileDirectory = Directory(path.dirname(filePath));
+    // Apply any existing directory renames
+    var workingFileName = sanitizedFileName;
+    for (final entry in _directoryRenames.entries) {
+      if (workingFileName.startsWith(entry.key + path.separator)) {
+        workingFileName = workingFileName.replaceFirst(entry.key, entry.value);
+      }
+    }
+
+    var workingFilePath = path.join(destDir, workingFileName);
+
+    // Check for directory or file conflicts
+    final fileDirectory = Directory(path.dirname(workingFilePath));
     if (!await fileDirectory.exists()) {
       await fileDirectory.create(recursive: true);
     }
 
-    // Check for file conflicts and handle renaming
-    var finalFilePath = filePath;
-    var finalFileName = sanitizedFileName;
+    // Check if this file is in a subdirectory and if that directory exists
+    final isNested = workingFileName.contains(path.separator);
+    if (isNested) {
+      final topLevelDir = workingFileName.split(path.separator).first;
+      final topLevelDirPath = path.join(destDir, topLevelDir);
 
-    if (File(filePath).existsSync()) {
-      print('\n⚠️  Warning: File "${path.basename(filePath)}" already exists in $destDir');
-      finalFileName = await _promptForNewFileName(sanitizedFileName, destDir);
-      finalFilePath = path.join(destDir, finalFileName);
+      // Check if we haven't already asked about this directory
+      if (!_directoryRenames.containsKey(topLevelDir) && Directory(topLevelDirPath).existsSync()) {
+        print('\n⚠️  Warning: Directory "$topLevelDir" already exists in $destDir');
+        final newDirName = await _promptForNewDirectoryName(topLevelDir, destDir);
+        _directoryRenames[topLevelDir] = newDirName;
 
-      // Re-validate the new path for security
-      final newCanonicalFile = File(finalFilePath).absolute.path;
-      if (!newCanonicalFile.startsWith(canonicalDest)) {
-        throw Exception(
-          'SECURITY: Path traversal detected in new filename: $finalFileName',
-        );
+        // Update the working filename with the new directory
+        workingFileName = workingFileName.replaceFirst(topLevelDir, newDirName);
+        workingFilePath = path.join(destDir, workingFileName);
+
+        // Recreate the directory structure with new name
+        final newFileDirectory = Directory(path.dirname(workingFilePath));
+        if (!await newFileDirectory.exists()) {
+          await newFileDirectory.create(recursive: true);
+        }
       }
+    } else if (File(workingFilePath).existsSync()) {
+      // Single file conflict (no directory nesting)
+      print('\n⚠️  Warning: File "${path.basename(workingFilePath)}" already exists in $destDir');
+      workingFileName = await _promptForNewFileName(workingFileName, destDir);
+      workingFilePath = path.join(destDir, workingFileName);
     }
 
-    final file = File(finalFilePath);
+    // Re-validate the final path for security
+    final finalCanonicalFile = File(workingFilePath).absolute.path;
+    if (!finalCanonicalFile.startsWith(canonicalDest)) {
+      throw Exception(
+        'SECURITY: Path traversal detected in new filename: $workingFileName',
+      );
+    }
+
+    final file = File(workingFilePath);
+    final finalFileName = workingFileName;
 
     // SECURITY: Check file size limit (10 GB max)
     const maxFileSize = 10 * 1024 * 1024 * 1024;
@@ -350,6 +384,34 @@ class CliReceiver {
 
     // Reconstruct safe path (preserves directory structure for nested files)
     return safeParts.isEmpty ? '' : path.joinAll(safeParts);
+  }
+
+  /// Prompts the user for a new directory name when a conflict is detected.
+  Future<String> _promptForNewDirectoryName(String originalName, String destDir) async {
+    while (true) {
+      stdout.write('Enter a new name for the directory (or press Enter to skip): ');
+      final input = stdin.readLineSync()?.trim() ?? '';
+
+      if (input.isEmpty) {
+        throw Exception('File transfer cancelled: Directory already exists and no new name provided');
+      }
+
+      // Sanitize the new directory name (no nested paths allowed for directories)
+      if (input.contains('/') || input.contains('\\') || input.contains('..') || input == '.') {
+        print('❌ Invalid directory name. Please use a simple name without path separators.');
+        continue;
+      }
+
+      // Check if the new directory name also conflicts
+      final newPath = path.join(destDir, input);
+      if (Directory(newPath).existsSync()) {
+        print('❌ Directory "$input" also already exists. Please choose a different name.');
+        continue;
+      }
+
+      print('✓ Using new directory name: $input (all files in "$originalName" will go here)');
+      return input;
+    }
   }
 
   /// Prompts the user for a new filename when a conflict is detected.
